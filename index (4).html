@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Mukta:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+  :root{
+    --ink:#3B2F6B; --paper:#FFFFFF; --surface:#F3F1F7; --line:#D9D4E6;
+    --text:#1C1A24; --muted:#5E5A6B; --go:#1E7A46; --warn:#B42318; --focus:#F2A900;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --ink:#B9AEF0; --paper:#16141D; --surface:#211E2B; --line:#3A3548;
+           --text:#ECE9F5; --muted:#A7A2B8; --go:#4CC285; --warn:#FF7A6B; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--text);
+       font-family:'Mukta',system-ui,'Segoe UI',Roboto,sans-serif;font-size:17px;line-height:1.5}
+  main{max-width:640px;margin:0 auto;padding:22px 16px 56px}
+  h1{font-size:1.65rem;line-height:1.2;margin:0 0 4px;color:var(--ink)}
+  .sub{color:var(--muted);margin:0 0 22px}
+  section{margin-bottom:26px}
+  h2{font-size:1.15rem;margin:0 0 8px;color:var(--ink)}
+  .stamp{border:4px double var(--ink);border-radius:16px;padding:14px 16px 16px;
+         background:var(--surface);transform:rotate(-.5deg);transition:border-color .25s}
+  .stamp.ok{border-color:var(--go)}
+  .stamp > *{transform:rotate(.5deg)}
+  label.f{display:block;font-weight:600;font-size:.95rem;margin:10px 0 4px}
+  input[type=text],input[type=tel],select,textarea{width:100%;padding:10px 12px;font:inherit;
+       border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--text)}
+  textarea{min-height:90px;resize:vertical}
+  .check{display:flex;gap:10px;align-items:flex-start;margin-top:14px}
+  .check input{width:24px;height:24px;margin-top:2px;flex:none;accent-color:var(--ink)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+  .grid .wide{grid-column:1 / -1}
+  @media (max-width:430px){.grid{grid-template-columns:1fr}}
+  .btns{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  button,.filebtn{display:block;font:inherit;font-weight:700;border:0;border-radius:10px;
+       padding:14px 10px;cursor:pointer;text-align:center;line-height:1.25}
+  button small,.filebtn small{display:block;font-weight:400;font-size:.82rem;opacity:.85}
+  .btns .wide{grid-column:1 / -1}
+  #scanner{margin-top:14px}
+  #reader{width:100%;border:3px solid var(--ink);border-radius:12px;overflow:hidden;background:#000}
+  #reader video{width:100% !important;display:block}
+  #stopBtn{width:100%;margin-top:10px}
+  .primary{background:var(--ink);color:var(--paper)}
+  .secondary{background:var(--surface);color:var(--ink);border:1px solid var(--line)}
+  .disabled,button:disabled{opacity:.4;pointer-events:none}
+  .filebtn input{position:absolute;width:1px;height:1px;opacity:0}
+  :focus-visible,.filebtn:focus-within{outline:3px solid var(--focus);outline-offset:2px}
+  .status{min-height:1.5em;margin-top:12px;font-weight:600}
+  .status.err{color:var(--warn)} .status.ok{color:var(--go)}
+  .hint{font-size:.9rem;color:var(--muted);margin:8px 0 0}
+  .actions{display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-top:16px}
+  #qr-work{position:absolute;left:-9999px;top:0;width:600px;height:600px}
+</style>
+</head>
+<body>
+<main>
+  <h1>Aadhaar address reader</h1>
+  <p class="sub">Records only the address of a card holder who agrees to share it. The Aadhaar number and photo are never saved.</p>
+
+  <section id="consentBox" class="stamp">
+    <h2>Consent</h2>
+    <label class="f" for="appKey">Access key</label>
+    <input type="password" id="appKey" autocomplete="off">
+
+    <label class="f" for="capturedBy">Your name (recorded with each entry)</label>
+    <input type="text" id="capturedBy" autocomplete="name">
+
+    <label class="f" for="purpose">Purpose</label>
+    <select id="purpose">
+      <option value="">Select purpose</option>
+      <option>Ration card verification</option>
+      <option>Beneficiary address record</option>
+      <option>Other</option>
+    </select>
+    <div id="purposeOtherWrap" hidden>
+      <label class="f" for="purposeOther">Describe the purpose</label>
+      <input type="text" id="purposeOther">
+    </div>
+
+    <label class="check">
+      <input type="checkbox" id="consent">
+      <span>I told the card holder why their address is being recorded, and they agreed to share it.</span>
+    </label>
+    <p class="hint" id="gateMsg"></p>
+  </section>
+
+  <section>
+    <h2>Read the card</h2>
+    <div class="btns">
+      <button type="button" class="primary gate wide" id="liveBtn">Scan QR with camera<small>Point the camera at the QR — reads automatically</small></button>
+      <label class="filebtn secondary gate">Take photo of QR<small>If live scan is slow</small>
+        <input type="file" id="qrInput" accept="image/*" capture="environment">
+      </label>
+      <label class="filebtn secondary gate">Read printed address<small>If the QR won’t scan</small>
+        <input type="file" id="ocrInput" accept="image/*" capture="environment">
+      </label>
+    </div>
+    <div id="scanner" hidden>
+      <div id="reader"></div>
+      <button type="button" class="secondary" id="stopBtn">Stop camera</button>
+    </div>
+    <p class="hint">Hold the QR 15–20 cm from the camera in good light and avoid glare on laminated cards. For the printed address, photograph the back side of the card.</p>
+    <div class="status" id="status" role="status" aria-live="polite"></div>
+  </section>
+
+  <section id="formSection">
+    <h2>Check and save</h2>
+    <div class="grid">
+      <div class="wide"><label class="f" for="name">Card holder name</label><input type="text" id="name"></div>
+      <div class="wide"><label class="f" for="careOf">Care of (S/o, W/o, D/o)</label><input type="text" id="careOf"></div>
+      <div><label class="f" for="house">House</label><input type="text" id="house"></div>
+      <div><label class="f" for="street">Street</label><input type="text" id="street"></div>
+      <div><label class="f" for="landmark">Landmark</label><input type="text" id="landmark"></div>
+      <div><label class="f" for="location">Locality</label><input type="text" id="location"></div>
+      <div><label class="f" for="vtc">Village/Town</label><input type="text" id="vtc"></div>
+      <div><label class="f" for="postOffice">Post office</label><input type="text" id="postOffice"></div>
+      <div><label class="f" for="subDistrict">Sub-district</label><input type="text" id="subDistrict"></div>
+      <div><label class="f" for="district">District</label><input type="text" id="district"></div>
+      <div><label class="f" for="state">State</label><input type="text" id="state"></div>
+      <div><label class="f" for="pincode">PIN code</label><input type="tel" id="pincode" maxlength="6" inputmode="numeric"></div>
+      <div class="wide"><label class="f" for="fullAddress">Full address</label><textarea id="fullAddress"></textarea></div>
+      <div><label class="f" for="mobile">Mobile (optional)</label><input type="tel" id="mobile" maxlength="10" inputmode="numeric"></div>
+      <div><label class="f" for="remarks">Remarks</label><input type="text" id="remarks"></div>
+    </div>
+    <div class="actions">
+      <button class="primary" id="saveBtn">Save address</button>
+      <button class="secondary" id="clearBtn" type="button">Clear</button>
+    </div>
+    <div class="status" id="saveStatus" role="status" aria-live="polite"></div>
+  </section>
+  <div id="qr-work"></div>
+</main>
+
+<script>
+// Paste your Apps Script web app link (ends with /exec) between the quotes:
+const API_URL = 'https://script.google.com/macros/s/AKfycbxDbaWyolLmL2SkVYAI3OgCRWTSuJPh4SiYcBaSj5IMYlMoPqYZwbN9GNGJcGjKuKI/exec';
+
+const $ = id => document.getElementById(id);
+const FIELDS = ['name','careOf','house','street','landmark','location','vtc','postOffice','subDistrict','district','state','pincode'];
+let source = 'Manual', consentTime = null, fullEdited = false;
+
+try {
+  $('capturedBy').value = localStorage.getItem('aar_by') || '';
+  $('appKey').value = localStorage.getItem('aar_key') || '';
+} catch (e) {}
+$('appKey').addEventListener('input', () => { try { localStorage.setItem('aar_key', $('appKey').value.trim()); } catch (e) {} refreshGate(); });
+
+function purpose(){ const p = $('purpose').value; return p === 'Other' ? $('purposeOther').value.trim() : p; }
+function consentOk(){ return $('consent').checked && $('appKey').value.trim() && $('capturedBy').value.trim() && purpose(); }
+
+function refreshGate(){
+  const ok = !!consentOk();
+  document.querySelectorAll('.gate').forEach(el => el.classList.toggle('disabled', !ok));
+  $('qrInput').disabled = !ok; $('ocrInput').disabled = !ok; $('saveBtn').disabled = !ok; $('liveBtn').disabled = !ok;
+  if (!ok && typeof stopLiveScan === 'function') stopLiveScan();
+  $('consentBox').classList.toggle('ok', ok);
+  $('gateMsg').textContent = ok ? 'Consent recorded at ' + new Date(consentTime).toLocaleTimeString() + '.'
+                                : 'Enter the access key and your name, choose the purpose and tick consent to start.';
+}
+['capturedBy','purposeOther'].forEach(id => $(id).addEventListener('input', refreshGate));
+$('purpose').addEventListener('change', () => { $('purposeOtherWrap').hidden = $('purpose').value !== 'Other'; refreshGate(); });
+$('consent').addEventListener('change', () => { consentTime = $('consent').checked ? new Date().toISOString() : null; refreshGate(); });
+
+function setStatus(id, msg, kind){ const s = $(id); s.textContent = msg; s.className = 'status' + (kind ? ' ' + kind : ''); }
+
+function maskAadhaar(s){
+  return String(s || '').replace(/\b\d{4}\s?\d{4}\s?\d{4}\s?\d{4}\b/g, 'XXXX XXXX XXXX XXXX')
+                        .replace(/\b\d{4}\s?\d{4}\s?\d{4}\b/g, 'XXXX XXXX XXXX');
+}
+
+function buildFull(){
+  if (fullEdited) return;
+  const parts = ['house','street','landmark','location','vtc'].map(k => $(k).value.trim());
+  const po = $('postOffice').value.trim(); if (po) parts.push('PO ' + po);
+  parts.push($('subDistrict').value.trim(), $('district').value.trim(), $('state').value.trim());
+  const seen = new Set(), out = [];
+  parts.forEach(p => { const k = p.toLowerCase(); if (p && !seen.has(k)) { seen.add(k); out.push(p); } });
+  const pin = $('pincode').value.trim();
+  $('fullAddress').value = out.join(', ') + (pin ? ' - ' + pin : '');
+}
+FIELDS.forEach(k => $(k).addEventListener('input', buildFull));
+$('fullAddress').addEventListener('input', () => { fullEdited = true; });
+
+function clearForm(){
+  FIELDS.concat(['fullAddress','mobile','remarks']).forEach(k => $(k).value = '');
+  fullEdited = false; source = 'Manual';
+}
+
+function fill(rec){
+  clearForm();
+  FIELDS.forEach(k => { if (rec[k]) $(k).value = maskAadhaar(rec[k]).trim(); });
+  if (rec.fullAddress) { $('fullAddress').value = maskAadhaar(rec.fullAddress); fullEdited = true; }
+  else buildFull();
+}
+
+/* ---------- QR reading ---------- */
+async function readQR(file){
+  if ('BarcodeDetector' in window) {
+    try {
+      const formats = await BarcodeDetector.getSupportedFormats();
+      if (formats.includes('qr_code')) {
+        const bmp = await createImageBitmap(file);
+        const r = await new BarcodeDetector({ formats: ['qr_code'] }).detect(bmp);
+        if (r.length) return r[0].rawValue;
+      }
+    } catch (e) { /* fall back */ }
+  }
+  const h = new Html5Qrcode('qr-work');
+  try { return await h.scanFile(file, false); }
+  catch (e) { throw new Error('No QR code found. Fill the frame with the QR, hold steady and avoid glare.'); }
+  finally { try { h.clear(); } catch (e) {} }
+}
+
+function decodeBytes(u8){
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(u8); }
+  catch (e) { return new TextDecoder('iso-8859-1').decode(u8); }
+}
+
+// UIDAI Secure QR: big decimal number -> bytes -> gzip -> fields separated by byte 255.
+function parseSecureQR(digits){
+  let hex = BigInt(digits).toString(16);
+  if (hex.length % 2) hex = '0' + hex;
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+  let data;
+  try { data = pako.ungzip(bytes); } catch (e) { data = pako.inflate(bytes); }
+
+  const fields = []; let start = 0;
+  for (let i = 0; i < data.length && fields.length < 20; i++) {
+    if (data[i] === 255) { fields.push(decodeBytes(data.slice(start, i))); start = i + 1; }
+  }
+  const off = /^V\d+$/.test(fields[0]) ? 1 : 0;   // V2/V3 cards start with a version field
+  const f = k => (fields[off + k] || '').trim();
+  // f(1) is the reference ID (contains Aadhaar digits) — deliberately not used.
+  return { name: f(2), careOf: f(5), district: f(6), landmark: f(7), house: f(8), location: f(9),
+           pincode: f(10), postOffice: f(11), state: f(12), street: f(13), subDistrict: f(14), vtc: f(15) };
+}
+
+// Old Aadhaar QR: plain XML. The uid attribute is ignored.
+function parseXmlQR(raw){
+  const doc = new DOMParser().parseFromString(raw.slice(raw.indexOf('<')), 'text/xml');
+  const n = doc.getElementsByTagName('PrintLetterBarcodeData')[0];
+  if (!n) throw new Error('This QR is not an Aadhaar QR code.');
+  const a = k => n.getAttribute(k) || '';
+  return { name: a('name'), careOf: a('co'), house: a('house'), street: a('street'), landmark: a('lm'),
+           location: a('loc'), vtc: a('vtc'), postOffice: a('po'), subDistrict: a('subdist'),
+           district: a('dist'), state: a('state'), pincode: a('pc') };
+}
+
+function parseAadhaarQR(raw){
+  raw = String(raw || '').trim();
+  if (raw.includes('PrintLetterBarcodeData')) return parseXmlQR(raw);
+  if (/^\d{100,}$/.test(raw)) return parseSecureQR(raw);
+  throw new Error('This QR is not an Aadhaar QR code.');
+}
+
+function applyQR(rec){
+  fill(rec); source = 'Aadhaar QR';
+  setStatus('status', 'Address read from QR. Check it and save.', 'ok');
+  $('formSection').scrollIntoView({ behavior: 'smooth' });
+}
+
+$('qrInput').addEventListener('change', async e => {
+  const file = e.target.files[0]; e.target.value = '';
+  if (!file || !consentOk()) return;
+  await stopLiveScan();
+  setStatus('status', 'Reading QR code…'); setStatus('saveStatus', '');
+  try {
+    applyQR(parseAadhaarQR(await readQR(file)));
+  } catch (err) {
+    setStatus('status', err.message || 'Could not read the QR code.', 'err');
+  }
+});
+
+/* ---------- Live camera scanning ---------- */
+let liveScanner = null, handling = false;
+
+async function startLiveScan(){
+  if (!consentOk() || liveScanner) return;
+  setStatus('status', 'Starting camera…'); setStatus('saveStatus', '');
+  $('scanner').hidden = false;
+  liveScanner = new Html5Qrcode('reader', {
+    formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+    experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+    verbose: false
+  });
+  const box = (w, h) => { const s = Math.floor(Math.min(w, h) * 0.85); return { width: s, height: s }; };
+  try {
+    await liveScanner.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: box,
+        videoConstraints: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } },
+      onLiveDecode,
+      () => {}
+    );
+    setStatus('status', 'Hold the QR inside the box, 15–20 cm from the camera.');
+    $('scanner').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  } catch (err) {
+    await stopLiveScan();
+    const blocked = /NotAllowed|Permission/i.test(String(err && (err.name || err)));
+    setStatus('status', blocked
+      ? 'Camera permission is blocked. In Chrome tap the lock icon → Permissions → Camera → Allow, then try again. Or use “Take photo of QR”.'
+      : 'Live camera could not start on this phone. Use “Take photo of QR” — it opens the camera directly.', 'err');
+  }
+}
+
+async function onLiveDecode(text){
+  if (handling) return;
+  handling = true;
+  try {
+    const rec = parseAadhaarQR(text);
+    await stopLiveScan();
+    if (navigator.vibrate) navigator.vibrate(120);
+    applyQR(rec);
+  } catch (err) {
+    setStatus('status', err.message + ' Keep the Aadhaar QR in the box.', 'err');
+  } finally {
+    handling = false;
+  }
+}
+
+async function stopLiveScan(){
+  if (liveScanner) {
+    try { if (liveScanner.isScanning) await liveScanner.stop(); liveScanner.clear(); } catch (e) {}
+    liveScanner = null;
+  }
+  $('scanner').hidden = true;
+}
+
+$('liveBtn').addEventListener('click', startLiveScan);
+$('stopBtn').addEventListener('click', () => { stopLiveScan(); setStatus('status', ''); });
+
+/* ---------- Printed address (OCR on server) ---------- */
+async function toJpegBase64(file, max){
+  const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const s = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas');
+  c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', 0.88).split(',')[1];
+}
+
+async function runServer(fn, ...args){
+  if (API_URL.indexOf('/exec') === -1) throw new Error('The app link is not set in index.html (API_URL).');
+  const body = { key: $('appKey').value.trim() };
+  if (fn === 'saveAddress') { body.action = 'save'; body.rec = args[0]; }
+  else { body.action = 'ocr'; body.base64 = args[0]; body.mimeType = args[1]; }
+  let res;
+  try {
+    res = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                                 body: JSON.stringify(body) });
+  } catch (e) { throw new Error('No internet connection, or the app link is wrong.'); }
+  let j;
+  try { j = await res.json(); } catch (e) { throw new Error('The server did not answer properly. Check the deployment is set to "Anyone".'); }
+  if (!j.ok) throw new Error(j.error || 'Server error.');
+  return j.data;
+}
+
+$('ocrInput').addEventListener('change', async e => {
+  const file = e.target.files[0]; e.target.value = '';
+  if (!file || !consentOk()) return;
+  setStatus('status', 'Reading printed address… this takes 5–10 seconds.'); setStatus('saveStatus', '');
+  try {
+    const res = await runServer('ocrImage', await toJpegBase64(file, 2000), 'image/jpeg');
+    fill(res.parsed); source = 'Photo OCR';
+    if (res.parsed.pincode) setStatus('status', 'Address read from photo. Check every field — OCR can misread letters.', 'ok');
+    else setStatus('status', 'Part of the address could not be read. Fill the missing fields before saving.', 'err');
+    $('formSection').scrollIntoView({ behavior: 'smooth' });
+  } catch (err) {
+    setStatus('status', err.message || 'Could not read the photo.', 'err');
+  }
+});
+
+/* ---------- Save ---------- */
+$('clearBtn').addEventListener('click', () => { clearForm(); setStatus('saveStatus', ''); });
+
+$('saveBtn').addEventListener('click', async () => {
+  if (!consentOk()) { setStatus('saveStatus', 'Record consent first.', 'err'); return; }
+  const rec = {};
+  FIELDS.forEach(k => rec[k] = $(k).value.trim());
+  Object.assign(rec, {
+    fullAddress: $('fullAddress').value.trim(), mobile: $('mobile').value.trim(),
+    remarks: $('remarks').value.trim(), source, capturedBy: $('capturedBy').value.trim(),
+    purpose: purpose(), consent: true, consentTime
+  });
+  if (!rec.name) { setStatus('saveStatus', 'Enter the card holder name.', 'err'); return; }
+  if (!/^\d{6}$/.test(rec.pincode)) { setStatus('saveStatus', 'PIN code must be 6 digits.', 'err'); return; }
+  if (rec.mobile && !/^[6-9]\d{9}$/.test(rec.mobile)) { setStatus('saveStatus', 'Mobile number must be 10 digits.', 'err'); return; }
+
+  try { localStorage.setItem('aar_by', rec.capturedBy); } catch (e) {}
+  $('saveBtn').disabled = true; setStatus('saveStatus', 'Saving…');
+  try {
+    const r = await runServer('saveAddress', rec);
+    setStatus('saveStatus', 'Saved to row ' + r.row + '. Tick consent again for the next person.', 'ok');
+    clearForm(); setStatus('status', '');
+    $('consent').checked = false; consentTime = null;
+  } catch (err) {
+    setStatus('saveStatus', err.message, 'err');
+  }
+  refreshGate();
+});
+
+refreshGate();
+</script>
+</body>
+</html>
